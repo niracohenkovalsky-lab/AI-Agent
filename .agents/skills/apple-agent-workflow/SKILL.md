@@ -1,6 +1,6 @@
 ---
 name: apple-agent-workflow
-description: Maintain this project's Gemini tool loop, CLI research flow, prompts, planning, configuration, and provider error handling. Use when changing runtime agent behavior or its contract tests.
+description: Maintain this project's Gemini tool loop, CLI research flow, prompts, configuration, and provider error handling. Use when changing runtime agent behavior or its contract tests.
 ---
 
 # Maintain the research agent
@@ -18,7 +18,8 @@ names synchronized with CLI wiring and prompts.
 An unavailable result may have no claims and a nonempty limitations list. Supported
 claims still need current-run evidence IDs. A tool error is not evidence; a malformed
 model response must become a readable failure rather than an uncited answer.
-Narrative claims must match cited excerpts; calculation claims must link registry
+Omit narrative claims that fail excerpt matching and report the omission in limitations,
+preserving supported claims. Unknown citations still fail validation. Calculation claims must link registry
 calculations and their exact input evidence. Test rendered registry values against
 contradictory model prose, and test automatic period caveats. Keep tool retries inside
 the round budget and block duplicate calls only after success or retry exhaustion.

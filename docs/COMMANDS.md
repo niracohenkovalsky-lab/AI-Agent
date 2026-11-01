@@ -16,6 +16,12 @@ on Windows / `./.venv/bin/python` on Unix. The runner uses that interpreter for 
 `index` requires the filing and cached embedding model. `chat` can call Gemini and
 Tavily and may consume quota. `check` and `test` do not call those providers or load `.env`.
 
+Tests allocate a fresh `apple-research-tests-*` directory directly under the system
+temporary folder for each run, bypassing existing `pytest-of-*` folders and shared
+project directories. An explicit `--basetemp` still takes precedence. The optional
+pytest cache is disabled. Temporary results remain available for debugging and can
+be removed later from the system temporary folder.
+
 ## Git hook
 
 The tracked `.githooks/pre-commit` calls `scripts/dev.py check --staged` using `.venv`.

@@ -22,7 +22,6 @@ from src.tools.document_qa import DocumentQATool
 from src.tools.tavily_search import TavilySearchTool
 from src.utils.evidence import EvidenceRegistry
 from src.utils.logging import configure_logging
-from src.utils.planning import format_plan
 
 LOGGER = logging.getLogger(__name__)
 
@@ -90,7 +89,6 @@ def _interactive(settings: Settings) -> int:
         document_tool = DocumentQATool(index, registry)
         web_tool = TavilySearchTool(settings.tavily_api_key, registry)
         calculator = FinancialCalculator(registry)
-        print("\n" + format_plan(query), flush=True)
         try:
             agent = GeminiResearchAgent(
                 api_key=settings.gemini_api_key,

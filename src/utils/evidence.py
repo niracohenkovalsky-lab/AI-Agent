@@ -91,6 +91,12 @@ class EvidenceRegistry:
         for evidence_id in evidence_ids:
             self.get(evidence_id)
 
+    def resolve_evidence_id(self, reference: str) -> str:
+        """Normalize a citation through registered provenance, never ID spelling."""
+        fact = self._facts.get(reference)
+        evidence_id = reference if reference in self._evidence or fact is None else fact.evidence_id
+        return self.get(evidence_id).evidence_id
+
     def calculation_sources(self, calculation_id: str) -> set[str]:
         """Resolve calculation provenance, including chained calculations."""
         sources: set[str] = set()

@@ -104,6 +104,29 @@ def test_temporary_provider_error_remains_retryable():
     assert GeminiResearchAgent._is_transient_provider_error(TimeoutError("temporary"))
 
 
+@pytest.mark.parametrize("final_only", [False, True])
+def test_repeated_disconnects_recover_with_backoff_and_preserve_request(monkeypatch, final_only):
+    from httpx import RemoteProtocolError
+
+    sleeps = []
+    monkeypatch.setattr("src.agent.time.sleep", sleeps.append)
+    response = _response([], '{"claims": [], "limitations": ["Missing metric."]}')
+    agent = _agent([RemoteProtocolError("Server disconnected without sending a response.")]
+                   * 4 + [response])
+    inputs = [{"type": "function_result", "call_id": "last-call"}]
+
+    assert agent._generate(inputs, "previous", final_only=final_only) is response
+    requests = agent.client.interactions.requests
+    assert len(requests) == 5
+    assert all(request == requests[0] for request in requests)
+    assert requests[0]["previous_interaction_id"] == "previous"
+    assert requests[0]["input"] == inputs
+    assert all(base <= delay <= base + 1 for base, delay in zip((2, 4, 8, 16), sleeps))
+    assert len(sleeps) == 4
+    if final_only:
+        assert requests[0]["generation_config"] == {"tool_choice": "none"}
+
+
 def test_last_tool_results_are_sent_for_a_final_answer_at_round_limit():
     final = json.dumps({"claims": [{"text": "Risk factor evidence", "evidence_ids": ["doc_1"]}],
                         "calculation_ids": [], "limitations": ["Microsoft metric unavailable."]})
@@ -145,3 +168,25 @@ def test_default_budget_allows_more_than_six_research_rounds():
     agent = _agent(responses, {'search_documents': lambda query: []})
     assert agent.run('Research question').claims
     assert len(agent.client.interactions.requests) == 8
+
+
+def test_non_json_answer_gets_one_tool_free_structured_response_request():
+    final = json.dumps({"claims": [{"text": "Risk", "evidence_ids": ["doc_1"]}],
+                        "calculation_ids": [], "limitations": []})
+    agent = _agent([_response([], "Here is my answer.", "draft"), _response([], final)])
+
+    assert agent.run("Test").claims[0].evidence_ids == ("doc_1",)
+    request = agent.client.interactions.requests[-1]
+    assert request["previous_interaction_id"] == "draft"
+    assert request["generation_config"]["tool_choice"] == "none"
+    assert request["response_format"]["mime_type"] == "application/json"
+    assert request["response_format"]["schema"]["required"] == ["claims", "calculation_ids", "limitations"]
+
+
+@pytest.mark.parametrize("final", ["Still not JSON", json.dumps({
+    "claims": [{"text": "Unsupported", "evidence_ids": ["unknown"]}]})])
+def test_json_format_recovery_is_bounded_and_still_validates_citations(final):
+    agent = _agent([_response([], "Not JSON"), _response([], final)])
+    with pytest.raises(Exception, match="structured JSON|Unknown evidence"):
+        agent.run("Test")
+    assert len(agent.client.interactions.requests) == 2

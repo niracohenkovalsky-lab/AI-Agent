@@ -19,7 +19,7 @@ retrieval and orchestration. These skills describe development workflows, not ru
 | Code area | Skill |
 | --- | --- |
 | `src/utils/{parser,locations,chunker,index,evidence,calculator}.py`, `src/tools/` | [apple-filing-pipeline](.agents/skills/apple-filing-pipeline/SKILL.md) |
-| `src/agent.py`, `src/main.py`, `src/utils/{planning,config,logging}.py`, `prompts/` | [apple-agent-workflow](.agents/skills/apple-agent-workflow/SKILL.md) |
+| `src/agent.py`, `src/main.py`, `src/utils/{config,logging}.py`, `prompts/` | [apple-agent-workflow](.agents/skills/apple-agent-workflow/SKILL.md) |
 
 ## Contracts to preserve
 

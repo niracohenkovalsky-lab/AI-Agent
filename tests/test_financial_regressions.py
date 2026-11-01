@@ -16,9 +16,50 @@ def agent(registry):
 def test_valid_id_does_not_support_invented_claim():
     registry = EvidenceRegistry()
     registry.add(Evidence('doc', 'document', 'Report', 'Margin fell due to costs.', 'section'))
-    with pytest.raises(RuntimeError, match='verbatim'):
+    response = agent(registry)._parse_final_response(json.dumps({
+        'claims': [{'text': 'Margin rose due to demand.', 'evidence_ids': ['doc']}]}))
+    assert response.claims == ()
+    assert response.limitations
+    assert 'Margin rose' not in format_response(response, registry)
+
+
+def test_nonverbatim_claim_does_not_discard_supported_findings():
+    registry = EvidenceRegistry()
+    registry.add(Evidence('doc', 'document', 'Report', 'Margin fell due to costs.', 'section'))
+    response = agent(registry)._parse_final_response(json.dumps({
+        'claims': [
+            {'text': 'Costs reduced profitability.', 'evidence_ids': ['doc']},
+            {'text': 'Margin fell due to costs.', 'evidence_ids': ['doc']},
+        ], 'limitations': ['Microsoft metric unavailable.']}))
+    assert [claim.text for claim in response.claims] == ['Margin fell due to costs.']
+    assert response.limitations[0] == 'Microsoft metric unavailable.'
+    assert any('omitted' in item for item in response.limitations)
+
+
+def test_registered_fact_citations_resolve_to_parent_evidence():
+    registry = EvidenceRegistry()
+    registry.add(Evidence('doc', 'document', 'Report', 'Margin fell due to costs.', 'section', numeric_facts=(
+        NumericFact('doc:fact:9', 'Cost', Decimal('2'), 'USD', '2025', 'doc'),
+        NumericFact('doc:fact:10', 'Sales', Decimal('4'), 'USD', '2025', 'doc'))))
+    calc = FinancialCalculator(registry).percentage('doc:fact:9', 'doc:fact:10')
+    response = agent(registry)._parse_final_response(json.dumps({
+        'claims': [
+            {'text': 'Margin fell due to costs.', 'evidence_ids': ['doc:fact:9', 'doc']},
+            {'text': 'Calculation', 'evidence_ids': ['doc:fact:9', 'doc:fact:10'],
+             'calculation_id': calc.calculation_id},
+        ], 'calculation_ids': [calc.calculation_id]}))
+    assert all(claim.evidence_ids == ('doc',) for claim in response.claims)
+    rendered = format_response(response, registry)
+    assert '50.00' in rendered
+    assert 'Report, section' in rendered
+
+
+def test_unregistered_fact_citation_is_not_resolved_by_splitting_its_id():
+    registry = EvidenceRegistry()
+    registry.add(Evidence('doc', 'document', 'Report', 'Data', 'section'))
+    with pytest.raises(ValueError, match='Unknown evidence'):
         agent(registry)._parse_final_response(json.dumps({
-            'claims': [{'text': 'Margin rose due to demand.', 'evidence_ids': ['doc']}]}))
+            'claims': [{'text': 'Data', 'evidence_ids': ['doc:fact:999']}]}))
 
 
 def test_calculation_claim_uses_registry_value_and_period_caveat():

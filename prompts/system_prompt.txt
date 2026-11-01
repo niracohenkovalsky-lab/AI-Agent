@@ -14,6 +14,8 @@ For the final answer, return JSON only in this shape:
 }
 
 Every factual claim requires at least one evidence ID returned during this execution.
+Use the parent evidence_id in evidence_ids, not a numeric fact_id. Fact IDs are for
+calculator arguments; calculation IDs belong in calculation_id and calculation_ids.
 Narrative claim text must be a contiguous verbatim excerpt present in every cited
 source (whitespace is normalized). Preserve context, negations, and qualifications.
 Do not paraphrase or write computed numbers into narrative claims. Calculation claims

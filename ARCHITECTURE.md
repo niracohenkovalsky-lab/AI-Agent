@@ -11,8 +11,7 @@ flowchart LR
     HTML[Local 10-K HTML] --> Parser[SEC parser and locations]
     Parser --> Chunks[Page-aware narrative and whole tables]
     Chunks --> Index[Local embeddings and Chroma index]
-    Question[CLI question] --> Plan[Visible research plan]
-    Plan --> Agent[Gemini tool loop]
+    Question[CLI question] --> Agent[Gemini tool loop]
     Agent --> Documents[Document search]
     Documents --> Index
     Agent --> Web[Tavily search]
@@ -37,7 +36,7 @@ flowchart LR
 | `src/utils/chunker.py` | Split narratives within pages; preserve complete tables and their metadata |
 | `src/utils/index.py` | Local embedding interface, Chroma persistence, compatibility manifest, and bounded reference traversal |
 | `src/utils/evidence.py`, `calculator.py` | Evidence/fact/calculation identity and deterministic arithmetic |
-| `src/utils/config.py`, `logging.py`, `planning.py` | Environment settings, log setup, and visible research approach |
+| `src/utils/config.py`, `logging.py` | Environment settings and log setup |
 | `prompts/` | Runtime response format, evidence policy, tool guidance, and examples |
 | `scripts/`, `.githooks/`, `.agents/skills/` | Development commands, Git checks, and coding-assistant workflows |
 
@@ -58,16 +57,27 @@ The CLI creates fresh tools and an `EvidenceRegistry` for each question. Gemini 
 `search_documents`, `search_web`, and `calculate_financial_metric`. Tool results preserve
 call IDs, and the model continues through interaction IDs. A bounded final synthesis step
 delivers the last tool results when the research budget is exhausted.
+If an earlier final answer is not valid JSON, the agent makes one tool-free formatting
+request linked to that interaction. Final synthesis and formatting requests enforce a
+JSON response schema; their output still passes the local evidence validator. A second
+malformed response fails without another formatting request.
 
 Final JSON contains `claims`, `calculation_ids`, and `limitations`. Narrative claim
 text must occur verbatim (normalized whitespace and case) in each cited excerpt.
+Narrative claims that fail this check are omitted with an explicit limitation while
+supported claims are preserved. Unknown citations and invalid calculations still fail.
+Registered numeric fact IDs used as citations resolve to their parent evidence IDs
+and are deduplicated before validation. Unregistered IDs are never inferred from their
+spelling; calculation claims still require exactly their registered input sources.
 Calculation claims link `calculation_id` and cite exactly its recursively resolved
 input sources. Rendering ignores calculation claim prose and uses registry values,
 formulas, and reporting periods, with automatic cross-period/unknown-period caveats.
 This establishes text presence and calculation provenance, not source reliability or
 contextual completeness. Missing evidence can produce a limitations-only answer.
 The loop defaults to twelve research rounds plus final synthesis. Provider and tool
-transient failures receive three attempts with backoff; permanent errors do not retry.
+transient failures receive bounded backoff; permanent errors do not retry. Gemini
+requests receive five attempts, with waits of 2, 4, 8, and 16 seconds plus 0–1 second
+of random jitter per wait, including final synthesis. Tool calls retain three attempts.
 Identical model calls are blocked after success or exhausted retries.
 
 Web numeric extraction supports only unambiguous annual prose percentages with an

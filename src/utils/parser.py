@@ -69,6 +69,20 @@ class _SectionBuilder:
     references: list[str] = field(default_factory=list)
 
 
+@dataclass
+class _FilingBuilder:
+    document_url: str | None
+    builders: list[_SectionBuilder] = field(default_factory=lambda: [_SectionBuilder("Filing overview", "overview")])
+    anchors: dict[str, str] = field(default_factory=dict)
+    notes: dict[str, str] = field(default_factory=dict)
+    node_locations: dict[int, str] = field(default_factory=dict)
+    table_count: int = 0
+
+    @property
+    def current(self) -> _SectionBuilder:
+        return self.builders[-1]
+
+
 class SecHtmlParser:
     """Extract filing sections and tabular financial context from an SEC HTML filing."""
 
@@ -80,115 +94,123 @@ class SecHtmlParser:
 
     def parse_soup(self, soup: BeautifulSoup, source_file: Path) -> ParsedFiling:
         body = soup.body or soup
-        builders: list[_SectionBuilder] = []
-        current = _SectionBuilder("Filing overview", "overview")
-        builders.append(current)
-        table_count = 0
-        canonical = soup.find("link", rel="canonical")
-        document_url = str(canonical.get("href")) if canonical and canonical.get("href") else None
-        if not document_url:
-            # Saved SEC HTML often retains absolute links to its original document.
-            for link in soup.find_all("a", href=True):
-                href = str(link["href"])
-                if href.startswith("https://www.sec.gov/Archives/") and "#" in href:
-                    document_url = href.split("#", 1)[0]
-                    break
+        state = _FilingBuilder(self._document_url(soup))
         nodes = body.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "table"])
         pages = printed_pages(nodes)
-        anchors: dict[str, str] = {}
-        notes: dict[str, str] = {}
-        node_locations: dict[int, str] = {}
-
         for node in nodes:
-            if not isinstance(node, Tag):
-                continue
-            if node.find_parent("table"):
-                continue
-            if node.name == "div" and node.find(["div", "p", "table", "h1", "h2", "h3", "h4", "h5", "h6"], recursive=False):
-                # SEC Workiva filings use nested layout divs. Keep only their leaf text blocks.
-                continue
-            text = self._clean(node.get_text(" ", strip=True))
-            if PAGE_FOOTER.search(text) and len(text) < 150:
-                continue
-            if node.name != "table" and self._is_section_heading(text) and not self._is_toc_link(node):
-                child_anchor = node.find(id=True)
-                locator = node.get("id") or (child_anchor.get("id") if child_anchor else None) or self._slug(text)
-                current = _SectionBuilder(text, locator, page_number=pages.get(id(node)))
-                builders.append(current)
-                node_locations[id(node)] = locator
-                note = NOTE_HEADING.match(text)
-                if note:
-                    notes[note.group(1)] = locator
-                for element in [node, *node.find_all(id=True)]:
-                    if element.get("id"):
-                        anchors[str(element["id"])] = locator
-                continue
-            page = pages.get(id(node))
-            if page != current.page_number and (current.paragraphs or current.tables):
-                current = _SectionBuilder(current.title, current.locator, page_number=page)
-                builders.append(current)
-            else:
-                current.page_number = page
-            node_locations[id(node)] = current.locator
-            for element in [node, *node.find_all(id=True)]:
-                if element.get("id"):
-                    anchors[str(element["id"])] = current.locator
-            for link in node.find_all("a", href=True):
-                fragment = internal_fragment(str(link["href"]), document_url)
-                if fragment:
-                    current.references.append(fragment)
-            current.references.extend(f"note:{number}" for number in NOTE_REFERENCE.findall(text))
-            if node.name in {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6"}:
-                if text:
-                    current.paragraphs.append(text)
-                continue
-            if node.name == "table":
-                table_count += 1
-                current.tables.append(
-                    self.normalize_table(
-                        node,
-                        f"{current.locator}-table-{table_count}",
-                        current.title,
-                        " ".join(current.paragraphs[-3:]),
-                    )
-                )
+            self._process_node(node, pages, state)
+        self._resolve_anchors(soup, state)
+        return self._build_filing(soup, body, source_file, state)
 
-        # SEC anchors may sit on a wrapper or an empty marker before a heading.
+    def _document_url(self, soup: BeautifulSoup) -> str | None:
+        canonical = soup.find("link", rel="canonical")
+        if canonical and canonical.get("href"):
+            return str(canonical.get("href"))
+        # Saved SEC HTML often retains absolute links to its original document.
+        for link in soup.find_all("a", href=True):
+            href = str(link["href"])
+            if href.startswith("https://www.sec.gov/Archives/") and "#" in href:
+                return href.split("#", 1)[0]
+        return None
+
+    def _skip_node(self, node: Tag) -> bool:
+        if not isinstance(node, Tag) or node.find_parent("table"):
+            return True
+        # Workiva layout wrappers duplicate the text of their leaf blocks.
+        return node.name == "div" and bool(node.find(
+            ["div", "p", "table", "h1", "h2", "h3", "h4", "h5", "h6"], recursive=False))
+
+    def _process_node(self, node: Tag, pages: dict[int, str], state: _FilingBuilder) -> None:
+        if self._skip_node(node):
+            return
+        text = self._clean(node.get_text(" ", strip=True))
+        if PAGE_FOOTER.search(text) and len(text) < 150:
+            return
+        if node.name != "table" and self._is_section_heading(text) and not self._is_toc_link(node):
+            self._start_section(node, text, pages.get(id(node)), state)
+        else:
+            self._append_node(node, text, pages.get(id(node)), state)
+
+    def _start_section(self, node: Tag, text: str, page: str | None, state: _FilingBuilder) -> None:
+        child_anchor = node.find(id=True)
+        locator = node.get("id") or (child_anchor.get("id") if child_anchor else None) or self._slug(text)
+        state.builders.append(_SectionBuilder(text, locator, page_number=page))
+        note = NOTE_HEADING.match(text)
+        if note:
+            state.notes[note.group(1)] = locator
+        self._record_location(node, state)
+
+    def _record_location(self, node: Tag, state: _FilingBuilder) -> None:
+        state.node_locations[id(node)] = state.current.locator
+        for element in [node, *node.find_all(id=True)]:
+            if element.get("id"):
+                state.anchors[str(element["id"])] = state.current.locator
+
+    def _continue_page(self, page: str | None, state: _FilingBuilder) -> None:
+        current = state.current
+        if page != current.page_number and (current.paragraphs or current.tables):
+            state.builders.append(_SectionBuilder(current.title, current.locator, page_number=page))
+        else:
+            current.page_number = page
+
+    def _append_node(self, node: Tag, text: str, page: str | None, state: _FilingBuilder) -> None:
+        self._continue_page(page, state)
+        self._record_location(node, state)
+        self._collect_references(node, text, state)
+        if node.name == "table":
+            self._append_table(node, state)
+        elif text:
+            state.current.paragraphs.append(text)
+
+    def _collect_references(self, node: Tag, text: str, state: _FilingBuilder) -> None:
+        for link in node.find_all("a", href=True):
+            fragment = internal_fragment(str(link["href"]), state.document_url)
+            if fragment:
+                state.current.references.append(fragment)
+        state.current.references.extend(f"note:{number}" for number in NOTE_REFERENCE.findall(text))
+
+    def _append_table(self, node: Tag, state: _FilingBuilder) -> None:
+        state.table_count += 1
+        current = state.current
+        current.tables.append(self.normalize_table(
+            node, f"{current.locator}-table-{state.table_count}",
+            current.title, " ".join(current.paragraphs[-3:])))
+
+    def _resolve_anchors(self, soup: BeautifulSoup, state: _FilingBuilder) -> None:
+        # Anchors may sit on a wrapper or an empty marker before a heading.
         for target in soup.find_all(id=True):
-            descendant = target.find(lambda tag: id(tag) in node_locations)
-            if descendant:
-                anchors[str(target["id"])] = node_locations[id(descendant)]
-            elif not target.get_text(strip=True):
-                following = target.find_next(lambda tag: id(tag) in node_locations
-                                             and bool(tag.get_text(strip=True)))
-                if following:
-                    anchors[str(target["id"])] = node_locations[id(following)]
+            destination = self._anchor_destination(target, state.node_locations)
+            if destination:
+                state.anchors[str(target["id"])] = state.node_locations[id(destination)]
 
-        sections = tuple(
-            ParsedSection(
-                title=builder.title,
-                locator=builder.locator,
-                paragraphs=tuple(builder.paragraphs),
-                tables=tuple(builder.tables),
-                page_number=builder.page_number,
-                references=tuple(dict.fromkeys(
-                    resolved for reference in builder.references
-                    if (resolved := (notes.get(reference[5:]) if reference.startswith("note:")
-                                     else anchors.get(reference))) and resolved != builder.locator
-                )),
-            )
-            for builder in builders
-            if builder.paragraphs or builder.tables or builder.title != "Filing overview"
-        )
+    def _anchor_destination(self, target: Tag, locations: dict[int, str]) -> Tag | None:
+        descendant = target.find(lambda tag: id(tag) in locations)
+        if descendant:
+            return descendant
+        if not target.get_text(strip=True):
+            return target.find_next(lambda tag: id(tag) in locations and bool(tag.get_text(strip=True)))
+        return None
+
+    def _section_references(self, builder: _SectionBuilder, state: _FilingBuilder) -> tuple[str, ...]:
+        resolved = (state.notes.get(ref[5:]) if ref.startswith("note:") else state.anchors.get(ref)
+                    for ref in builder.references)
+        return tuple(dict.fromkeys(ref for ref in resolved if ref and ref != builder.locator))
+
+    def _build_section(self, builder: _SectionBuilder, state: _FilingBuilder) -> ParsedSection:
+        return ParsedSection(
+            title=builder.title, locator=builder.locator,
+            paragraphs=tuple(builder.paragraphs), tables=tuple(builder.tables),
+            page_number=builder.page_number, references=self._section_references(builder, state))
+
+    def _build_filing(self, soup: BeautifulSoup, body: Tag, source: Path, state: _FilingBuilder) -> ParsedFiling:
+        sections = tuple(self._build_section(builder, state) for builder in state.builders
+                         if builder.paragraphs or builder.tables or builder.title != "Filing overview")
         raw_text = body.get_text(" ", strip=True)
         return ParsedFiling(
-            source_file=source_file,
-            filing_year=self._filing_year(soup, raw_text),
-            filing_date=self._find_filing_date(raw_text),
-            sections=sections,
-            document_url=document_url,
-            anchor_ids=tuple(str(node["id"]) for node in soup.find_all(id=True)),
-        )
+            source_file=source, filing_year=self._filing_year(soup, raw_text),
+            filing_date=self._find_filing_date(raw_text), sections=sections,
+            document_url=state.document_url,
+            anchor_ids=tuple(str(node["id"]) for node in soup.find_all(id=True)))
 
     def normalize_table(
         self,

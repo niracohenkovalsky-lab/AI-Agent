@@ -7,7 +7,6 @@ import pytest
 
 from src.agent import Claim, GeminiResearchAgent, ResearchResponse, format_response
 from src.utils.evidence import Evidence, EvidenceRegistry
-from src.utils.planning import format_plan
 
 
 def agent_with_responses(responses):
@@ -57,13 +56,18 @@ def test_provider_status_retry_policy(status, retryable):
 
 
 def test_retries_are_bounded_and_authentication_errors_fail_immediately(monkeypatch):
-    monkeypatch.setattr("src.agent.time.sleep", lambda _: None)
+    sleeps = []
+    monkeypatch.setattr("src.agent.time.sleep", sleeps.append)
+    agent = agent_with_responses([TimeoutError()] * 5)
     with pytest.raises(RuntimeError, match="after retry"):
-        agent_with_responses([TimeoutError()] * 3).run("Question")
+        agent.run("Question")
+    assert len(sleeps) == 4
+    sleeps.clear()
     error = RuntimeError("authentication failed")
     error.code = 401
     with pytest.raises(RuntimeError, match="authentication failed"):
         agent_with_responses([error]).run("Question")
+    assert sleeps == []
 
 
 def test_tool_failure_can_be_reported_without_inventing_evidence():
@@ -71,11 +75,3 @@ def test_tool_failure_can_be_reported_without_inventing_evidence():
     agent.tool_handlers["search_web"] = lambda **_: (_ for _ in ()).throw(TimeoutError("secret detail"))
     result = agent._execute_tool("search_web", {"query": "unavailable"})
     assert result == {"ok": False, "error": "tool_failure:search_web:TimeoutError"}
-
-
-def test_plan_describes_calculations_and_external_sources_when_relevant():
-    plan = format_plan("Compare Apple and Microsoft gross margin percentages")
-    assert plan.startswith("To answer this, I will:\n1.")
-    assert "external sources" in plan
-    assert "Calculate" in plan
-    assert "citations" in plan
