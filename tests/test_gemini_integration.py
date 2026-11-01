@@ -25,7 +25,7 @@ def test_real_gemini_manual_function_round_trip() -> None:
     agent = GeminiResearchAgent(
         api_key=os.environ["GEMINI_API_KEY"],
         model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
-        system_instruction=("Call search_documents exactly once. Then return JSON with one claim supported by "
+        system_instruction=("Call search_documents exactly once. Then return JSON with one verbatim excerpt claim supported by "
                             "doc_integration, an empty calculation_ids list, and an empty limitations list."),
         registry=registry,
         tool_handlers={"search_documents": search_documents},

@@ -1,0 +1,4 @@
+# Git hooks run under a POSIX shell, including Git for Windows.
+.githooks/* text eol=lf
+*.py text eol=lf
+*.md text eol=lf

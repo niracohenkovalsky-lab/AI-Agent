@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
 from src.utils.index import SearchHit
 from src.utils.evidence import Evidence, EvidenceRegistry, NumericFact
+
+LOGGER = logging.getLogger(__name__)
 
 
 class DocumentQATool:
@@ -19,6 +22,11 @@ class DocumentQATool:
         if not query.strip():
             raise ValueError("Document search query cannot be empty")
         hits: list[SearchHit] = self.index.search(query, limit)
+        follow = getattr(self.index, "follow_references", None)
+        if follow:
+            hits = follow(hits)
+        if not hits:
+            LOGGER.info("No document evidence found")
         evidence: list[Evidence] = []
         for hit in hits:
             evidence_id = f"doc_{uuid4().hex[:10]}"
@@ -32,6 +40,8 @@ class DocumentQATool:
                 reporting_period=hit.metadata.get("filing_year"),
                 unit=hit.metadata.get("table_unit"),
                 numeric_facts=tuple(facts),
+                page_number=hit.metadata.get("page_number") or None,
+                url=hit.metadata.get("source_url") or None,
             )
             self.registry.add(record)
             evidence.append(record)
@@ -42,12 +52,20 @@ class DocumentQATool:
         facts: list[NumericFact] = []
         try:
             entries = json.loads(serialized)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
+            LOGGER.warning("Document evidence has malformed numeric metadata")
+            return facts
+        if not isinstance(entries, list):
+            LOGGER.warning("Document numeric metadata is not a list")
             return facts
         for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                continue
             try:
                 value = Decimal(str(entry["value"]))
-            except (KeyError, InvalidOperation):
+            except (KeyError, InvalidOperation, TypeError, ValueError):
+                continue
+            if not value.is_finite():
                 continue
             facts.append(
                 NumericFact(

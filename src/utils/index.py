@@ -149,6 +149,35 @@ class ChromaIndex:
         self._collection = client.get_or_create_collection(self.collection_name)
         return self._collection
 
+    def follow_references(self, hits: list[SearchHit], max_depth: int = 2, max_additional: int = 8) -> list[SearchHit]:
+        """Expand local note/anchor links with bounded traversal and cycle detection."""
+        if not any(json.loads(hit.metadata.get("references", "[]")) for hit in hits):
+            return hits
+        records = self._open_collection().get(include=["documents", "metadatas"])
+        by_locator: dict[str, list[SearchHit]] = {}
+        for chunk_id, document, metadata in zip(records["ids"], records["documents"], records["metadatas"]):
+            metadata = metadata or {}
+            by_locator.setdefault(metadata.get("section_locator", ""), []).append(
+                SearchHit(chunk_id, document or "", metadata)
+            )
+        expanded = {hit.chunk_id: hit for hit in hits}
+        frontier = hits
+        for _ in range(max_depth):
+            following = []
+            for hit in frontier:
+                for locator in json.loads(hit.metadata.get("references", "[]")):
+                    for target in by_locator.get(locator, []):
+                        if target.chunk_id in expanded:
+                            continue
+                        if len(expanded) >= len(hits) + max_additional:
+                            return list(expanded.values())
+                        expanded[target.chunk_id] = target
+                        following.append(target)
+            frontier = following
+            if not frontier:
+                break
+        return list(expanded.values())
+
     @staticmethod
     def _results_to_hits(results: dict) -> list[SearchHit]:
         ids = (results.get("ids") or [[]])[0]

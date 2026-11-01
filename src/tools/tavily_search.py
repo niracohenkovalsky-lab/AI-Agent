@@ -11,10 +11,10 @@ from src.utils.evidence import Evidence, EvidenceRegistry, NumericFact
 
 
 GROSS_MARGIN_PATTERN = re.compile(
-    r"\bgross\s+margin(?:\s+(?:was|is|of|at|reached|reported(?:\s+at)?))?\s*[:=]?\s*(?:approximately\s+)?(\d+(?:\.\d+)?)\s*%",
+    r"\bgross\s+margin(?:\s+percentage)?(?:\s+(?:was|is|of|at|reached|reported(?:\s+at)?))?\s*[:=]?\s*(?:approximately\s+)?(\d+(?:\.\d+)?)\s*(?:%|percent\b)",
     re.IGNORECASE,
 )
-YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
+FISCAL_PERIOD_PATTERN = re.compile(r"\b(?:fiscal\s+(?:year\s+)?|FY\s*)((?:19|20)\d{2})\b", re.IGNORECASE)
 
 
 class TavilySearchTool:
@@ -29,10 +29,8 @@ class TavilySearchTool:
         if not query.strip():
             raise ValueError("Web search query cannot be empty")
         client = self._client or self._create_client()
-        try:
-            response = client.search(query, max_results=limit, search_depth="advanced")
-        except Exception as exc:
-            raise RuntimeError(f"Tavily search failed: {exc}") from exc
+        # Preserve exception type/status so orchestration can retry transient failures.
+        response = client.search(query=query, max_results=limit, search_depth="advanced")
         evidence: list[Evidence] = []
         for result in response.get("results", []):
             evidence_id = f"web_{uuid4().hex[:10]}"
@@ -54,14 +52,23 @@ class TavilySearchTool:
     @staticmethod
     def _numeric_facts(excerpt: str, published_date: str | None, evidence_id: str) -> list[NumericFact]:
         """Register only explicitly labelled web metrics the calculator can safely reuse."""
-        # A fiscal year stated in the excerpt describes the metric; publication date is only a fallback.
-        period_match = YEAR_PATTERN.search(excerpt) or YEAR_PATTERN.search(published_date or "")
-        reporting_period = period_match.group(0) if period_match else None
         facts: list[NumericFact] = []
         for index, match in enumerate(GROSS_MARGIN_PATTERN.finditer(excerpt)):
+            # shortcut: only unambiguous annual prose metrics; tables need structured extraction.
+            start = max(excerpt.rfind('. ', 0, match.start()), excerpt.rfind('\n', 0, match.start())) + 1
+            ends = [position for position in (excerpt.find('. ', match.end()), excerpt.find('\n', match.end())) if position >= 0]
+            sentence = excerpt[start:min(ends) if ends else len(excerpt)]
+            periods = set(FISCAL_PERIOD_PATTERN.findall(sentence))
+            if len(periods) != 1 or len(list(GROSS_MARGIN_PATTERN.finditer(sentence))) != 1:
+                continue
+            if re.search(r'\b(?:quarter|Q[1-4]|three months|six months|nine months|cloud)\b', sentence, re.IGNORECASE):
+                continue
+            reporting_period = periods.pop()
             try:
                 value = Decimal(match.group(1))
             except InvalidOperation:
+                continue
+            if not 0 <= value <= 100:
                 continue
             facts.append(
                 NumericFact(

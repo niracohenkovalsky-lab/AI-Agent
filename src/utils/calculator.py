@@ -79,12 +79,14 @@ class FinancialCalculator:
         """Resolve a verified percentage calculation or a percent-valued retrieved fact."""
         try:
             calculation = self.registry.get_calculation(reference)
-            return calculation.value, calculation.reporting_periods, calculation.calculation_id
         except EvidenceError:
             fact = self.registry.get_fact(reference)
             if fact.unit != "percent":
                 raise EvidenceError(f"Fact {reference} is not a verified percentage")
             return fact.value, (fact.reporting_period or "unknown",), fact.fact_id
+        if calculation.operation not in {"percentage", "gross_margin_percentage"}:
+            raise EvidenceError(f"Calculation {reference} is not a percentage")
+        return calculation.value, calculation.reporting_periods, calculation.calculation_id
 
     def _record(
         self,

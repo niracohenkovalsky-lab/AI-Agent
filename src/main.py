@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -21,6 +22,8 @@ from src.tools.document_qa import DocumentQATool
 from src.tools.tavily_search import TavilySearchTool
 from src.utils.evidence import EvidenceRegistry
 from src.utils.logging import configure_logging
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _read_prompt(name: str) -> str:
@@ -86,21 +89,22 @@ def _interactive(settings: Settings) -> int:
         document_tool = DocumentQATool(index, registry)
         web_tool = TavilySearchTool(settings.tavily_api_key, registry)
         calculator = FinancialCalculator(registry)
-        agent = GeminiResearchAgent(
-            api_key=settings.gemini_api_key,
-            model=settings.gemini_model,
-            system_instruction=system_instruction,
-            registry=registry,
-            tool_handlers={
-                "search_documents": document_tool.search_documents,
-                "search_web": web_tool.search_web,
-                "calculate_financial_metric": calculator.execute,
-            },
-        )
         try:
+            agent = GeminiResearchAgent(
+                api_key=settings.gemini_api_key,
+                model=settings.gemini_model,
+                system_instruction=system_instruction,
+                registry=registry,
+                tool_handlers={
+                    "search_documents": document_tool.search_documents,
+                    "search_web": web_tool.search_web,
+                    "calculate_financial_metric": calculator.execute,
+                },
+            )
             response = agent.run(query)
             print("\n" + format_response(response, registry))
         except Exception as exc:
+            LOGGER.error("Research request failed (%s)", type(exc).__name__)
             print(f"Unable to complete the research request safely: {exc}")
 
 
@@ -111,7 +115,12 @@ def main(argv: list[str] | None = None) -> int:
     arguments = argument_parser.parse_args(argv)
     settings = Settings.from_environment(ROOT)
     configure_logging("DEBUG" if arguments.verbose else settings.log_level)
-    return _index(settings) if arguments.command == "index" else _interactive(settings)
+    try:
+        return _index(settings) if arguments.command == "index" else _interactive(settings)
+    except Exception as exc:
+        LOGGER.error("Application failed (%s)", type(exc).__name__)
+        print(f"Unable to start or index the filing: {exc}")
+        return 2
 
 
 if __name__ == "__main__":

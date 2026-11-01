@@ -19,7 +19,7 @@ class Settings:
     chunk_size: int = 1_400
     chunk_overlap: int = 180
     # Bump whenever parsing or numeric-fact extraction changes so stale Chroma metadata is rebuilt.
-    chunking_version: str = "sec-html-v4"
+    chunking_version: str = "sec-html-v6"
 
     @classmethod
     def from_environment(cls, root: Path) -> "Settings":

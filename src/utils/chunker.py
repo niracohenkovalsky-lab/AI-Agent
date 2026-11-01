@@ -30,6 +30,12 @@ class SectionChunker:
                 "filing_date": filing.filing_date or "unknown",
                 "section_title": section.title,
                 "source_locator": section.locator,
+                "page_number": section.page_number or "",
+                "source_url": ((filing.document_url + "#" + section.locator)
+                               if filing.document_url and section.locator in filing.anchor_ids
+                               else filing.document_url or ""),
+                "section_locator": section.locator,
+                "references": json.dumps(section.references),
             }
             text = "\n\n".join(section.paragraphs)
             chunks.extend(self._split_text(text, f"section-{section_index}", base_metadata, "narrative"))

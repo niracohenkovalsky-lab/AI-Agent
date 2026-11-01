@@ -33,6 +33,7 @@ class Evidence:
     url: str | None = None
     retrieved_at: str | None = None
     numeric_facts: tuple[NumericFact, ...] = ()
+    page_number: str | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,22 @@ class EvidenceRegistry:
     def validate_evidence_ids(self, evidence_ids: Iterable[str]) -> None:
         for evidence_id in evidence_ids:
             self.get(evidence_id)
+
+    def resolve_evidence_id(self, reference: str) -> str:
+        """Normalize a citation through registered provenance, never ID spelling."""
+        fact = self._facts.get(reference)
+        evidence_id = reference if reference in self._evidence or fact is None else fact.evidence_id
+        return self.get(evidence_id).evidence_id
+
+    def calculation_sources(self, calculation_id: str) -> set[str]:
+        """Resolve calculation provenance, including chained calculations."""
+        sources: set[str] = set()
+        for reference in self.get_calculation(calculation_id).input_references:
+            if reference in self._calculations:
+                sources.update(self.calculation_sources(reference))
+            else:
+                sources.add(self.get_fact(reference).evidence_id)
+        return sources
 
     def sources_for(self, evidence_ids: Iterable[str]) -> list[Evidence]:
         seen: set[str] = set()
