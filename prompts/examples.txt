@@ -1,0 +1,6 @@
+Question: What are Apple's top 3 risk factors mentioned in their latest 10-K, and what percentage of total revenue did they spend on R&D?
+Expected tool sequence: search_documents for Item 1A; search_documents for R&D and net sales; calculate_financial_metric with percentage. Do not call search_web.
+
+Question: How does Apple's gross margin compare to Microsoft's current gross margin, and what reasons does Apple cite in their 10-K for any margin pressure?
+Expected tool sequence: search_documents for Apple statement data and MD&A; search_web for Microsoft; calculate_financial_metric for gross margins and percentage-point difference.
+

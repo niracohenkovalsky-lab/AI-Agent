@@ -1,0 +1,10 @@
+search_documents: Use for Apple historical figures, risk factors, financial statements,
+and Apple management discussion in the local 10-K.
+
+search_web: Use only for current or external information not available in the Apple 10-K,
+such as Microsoft's latest gross margin. Prefer primary sources.
+
+calculate_financial_metric: Use after retrieval. Supply only registry fact IDs or
+calculation IDs from prior tools. Use percentage for ratios, gross_margin_percentage for
+(revenue - cost of revenue) / revenue, and percentage_point_difference for comparisons.
+

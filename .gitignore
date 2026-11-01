@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_tmp/
+.venv/
+.python/
+.uv-cache/
+data/chroma/
+data/index_manifest.json
+
