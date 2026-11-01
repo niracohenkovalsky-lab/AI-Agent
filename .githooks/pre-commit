@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+if [ -x .venv/Scripts/python.exe ]; then
+    interpreter=.venv/Scripts/python.exe
+elif [ -x .venv/bin/python ]; then
+    interpreter=.venv/bin/python
+else
+    echo "Create the project's Python 3.11 .venv and install requirements.txt before committing." >&2
+    exit 1
+fi
+
+exec "$interpreter" scripts/dev.py check --staged

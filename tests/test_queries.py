@@ -69,7 +69,7 @@ def test_repeated_tool_call_is_a_safe_tool_error():
 
 def test_risk_query_uses_document_and_calculator_not_web():
     calls = []
-    final = json.dumps({"claims": [{"text": "Supported", "evidence_ids": ["doc_1"]}], "calculation_ids": [], "limitations": []})
+    final = json.dumps({"claims": [{"text": "Risk factor evidence", "evidence_ids": ["doc_1"]}], "calculation_ids": [], "limitations": []})
     agent = _agent([_response([_call("search_documents", {"query": "risks"}, "risk"), _call("search_documents", {"query": "R&D"}, "rd")]), _response([_call("calculate_financial_metric", {"operation": "percentage"}, "calc")]), _response([], final)], {"search_documents": lambda query: calls.append("document") or {}, "search_web": lambda query: calls.append("web") or {}, "calculate_financial_metric": lambda operation: calls.append("calculate") or {}})
     agent.run("What are Apple's top 3 risk factors and R&D percentage?")
     assert calls == ["document", "document", "calculate"]
@@ -77,7 +77,7 @@ def test_risk_query_uses_document_and_calculator_not_web():
 
 def test_margin_query_combines_document_and_web():
     calls = []
-    final = json.dumps({"claims": [{"text": "Periods differ", "evidence_ids": ["doc_1"]}], "calculation_ids": [], "limitations": []})
+    final = json.dumps({"claims": [{"text": "Risk factor evidence", "evidence_ids": ["doc_1"]}], "calculation_ids": [], "limitations": []})
     agent = _agent([_response([_call("search_documents", {"query": "Apple margin"}, "apple"), _call("search_web", {"query": "Microsoft margin"}, "msft")]), _response([], final)], {"search_documents": lambda query: calls.append("document") or {}, "search_web": lambda query: calls.append("web") or {}})
     agent.run("Compare Apple and Microsoft gross margins")
     assert calls == ["document", "web"]
@@ -104,8 +104,44 @@ def test_temporary_provider_error_remains_retryable():
     assert GeminiResearchAgent._is_transient_provider_error(TimeoutError("temporary"))
 
 
+def test_last_tool_results_are_sent_for_a_final_answer_at_round_limit():
+    final = json.dumps({"claims": [{"text": "Risk factor evidence", "evidence_ids": ["doc_1"]}],
+                        "calculation_ids": [], "limitations": ["Microsoft metric unavailable."]})
+    agent = _agent([_response([_call("search_documents", {"query": "Apple margin"}, "last-call")]),
+                    _response([], final)], {"search_documents": lambda query: {"evidence_id": "doc_1"}})
+    agent.max_rounds = 1
+
+    result = agent.run("Compare Apple and Microsoft gross margins")
+
+    request = agent.client.interactions.requests[-1]
+    assert request["input"][0]["call_id"] == "last-call"
+    assert request["generation_config"]["tool_choice"] == "none"
+    assert request["previous_interaction_id"] == "interaction-1"
+    assert result.claims[0].evidence_ids == ("doc_1",)
+    assert result.limitations == ("Microsoft metric unavailable.",)
+
+
+def test_final_answer_at_round_limit_still_rejects_unknown_citations():
+    final = json.dumps({"claims": [{"text": "Unsupported margin", "evidence_ids": ["not-real"]}]})
+    agent = _agent([_response([_call("search_web", {"query": "Microsoft margin"}, "last-call")]),
+                    _response([], final)], {"search_web": lambda query: []})
+    agent.max_rounds = 1
+
+    with pytest.raises(Exception, match="Unknown evidence"):
+        agent.run("Compare Apple and Microsoft gross margins")
+
+
 def test_strict_calculator_schema_allows_unused_references_to_be_null():
     calculator = next(tool for tool in GeminiResearchAgent._function_declarations() if tool["name"] == "calculate_financial_metric")
     parameters = calculator["parameters"]
     assert parameters["required"] == ["operation"]
     assert parameters["properties"]["numerator_fact_id"]["type"] == "string"
+
+
+def test_default_budget_allows_more_than_six_research_rounds():
+    responses = [_response([_call('search_documents', {'query': str(i)}, str(i))]) for i in range(7)]
+    responses.append(_response([], json.dumps({'claims': [
+        {'text': 'Risk factor evidence', 'evidence_ids': ['doc_1']}]})))
+    agent = _agent(responses, {'search_documents': lambda query: []})
+    assert agent.run('Research question').claims
+    assert len(agent.client.interactions.requests) == 8

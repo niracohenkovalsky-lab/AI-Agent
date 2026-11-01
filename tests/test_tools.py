@@ -53,5 +53,5 @@ def test_tavily_registers_explicit_gross_margin_percentages_as_calculator_facts(
 def test_tavily_reports_missing_key_and_api_failures() -> None:
     with pytest.raises(RuntimeError, match="TAVILY_API_KEY"):
         TavilySearchTool(None, EvidenceRegistry()).search_web("Microsoft gross margin")
-    with pytest.raises(RuntimeError, match="Tavily search failed"):
+    with pytest.raises(TimeoutError, match="network timeout"):
         TavilySearchTool("key", EvidenceRegistry(), FailingTavily()).search_web("Microsoft gross margin")
